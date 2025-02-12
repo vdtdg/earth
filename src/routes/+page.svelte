@@ -48,7 +48,7 @@
 
         // --- Load Land Mask Image and Build Land-Only Dot Geometry ---
         const textureLoader = new THREE.TextureLoader();
-        textureLoader.load('/landmask.png', (texture) => {
+        textureLoader.load('landmask.png', (texture) => {
             // Create a canvas to read the land mask pixel data.
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
