@@ -44,7 +44,8 @@
         controls.dampingFactor = 0.05;
         controls.enablePan = false;
         controls.autoRotate = true;
-        controls.autoRotateSpeed = 0.1; // slow rotation
+        controls.autoRotateSpeed = 0.2; // slow rotation
+
 
         // --- Load Land Mask Image and Build Land-Only Dot Geometry ---
         const textureLoader = new THREE.TextureLoader();
@@ -103,6 +104,78 @@
             });
             const points = new THREE.Points(filteredGeo, pointsMaterial);
             scene.add(points);
+
+            const logoLoader = new THREE.TextureLoader();
+            logoLoader.load('favicon.png', (logoTexture) => {
+                // Create a plane geometry to hold the logo
+                const aspectRatio = logoTexture.image.width / logoTexture.image.height;
+                const logoSize = 0.2; // Adjust this value to change logo size
+                const logoGeometry = new THREE.PlaneGeometry(logoSize * aspectRatio, logoSize);
+
+                // Create material with transparency
+                const logoMaterial = new THREE.MeshBasicMaterial({
+                    map: logoTexture,
+                    transparent: true,
+                    side: THREE.DoubleSide
+                });
+
+                const logoMesh = new THREE.Mesh(logoGeometry, logoMaterial);
+                const raycasterLogo = new THREE.Raycaster();
+                const mouseClick = new THREE.Vector2();
+
+                // Add click event listener to the renderer
+                renderer.domElement.addEventListener('click', (event) => {
+                    const rect = renderer.domElement.getBoundingClientRect();
+                    mouseClick.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+                    mouseClick.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+                    raycasterLogo.setFromCamera(mouseClick, camera);
+                    const intersects = raycasterLogo.intersectObject(logoMesh);
+
+                    if (intersects.length > 0) {
+                        window.location.href = 'https://dtdg.fr';
+                    }
+                });
+
+                // Add this right after creating the logoMesh and raycasterLogo
+                function onLogoPointerMove(event: MouseEvent) {
+                    const rect = renderer.domElement.getBoundingClientRect();
+                    mouseClick.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+                    mouseClick.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+                    raycasterLogo.setFromCamera(mouseClick, camera);
+                    const intersects = raycasterLogo.intersectObject(logoMesh);
+
+                    if (intersects.length > 0) {
+                        renderer.domElement.style.cursor = 'pointer';
+                    } else {
+                        renderer.domElement.style.cursor = 'default';
+                    }
+                }
+                renderer.domElement.addEventListener('pointermove', onLogoPointerMove);
+
+                // Position the logo tangent to the sphere
+                // The sphere radius is 2 in your code
+                const sphereRadius = 2;
+                logoMesh.position.set(0, 0, 0);
+                logoMesh.rotation.x = Math.PI / 2; // Rotate to face outward
+
+                scene.add(logoMesh);
+
+                // Make the logo always face the camera
+                function updateLogoRotation() {
+                    logoMesh.quaternion.copy(camera.quaternion);
+                }
+
+                // Add the update function to your animation loop
+                const originalAnimate = animate;
+                animate = function () {
+                    updateLogoRotation();
+                    originalAnimate();
+                }
+            });
+
+
 
             // --- Set Up Raycaster for Per-Dot Hover Detection ---
             const raycaster = new THREE.Raycaster();
@@ -173,9 +246,11 @@
             }
 
             animate();
-
+            // Add cleanup for the click event in the return function
             // Cleanup pointer events when unloading.
             return () => {
+                renderer.domElement.removeEventListener('pointermove', onLogoPointerMove);
+                renderer.domElement.removeEventListener('click', onClick);
                 renderer.domElement.removeEventListener('pointermove', onPointerMove);
                 renderer.domElement.removeEventListener('pointerout', () => {
                     hoverPoint = null;
