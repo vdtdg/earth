@@ -2,6 +2,7 @@
     import {onMount} from 'svelte';
     import * as THREE from 'three';
     import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+    import {PUBLIC_UMAMI_SCRIPT_URL, PUBLIC_UMAMI_WEBSITE_ID} from "$env/static/public";
 
     let container: HTMLDivElement;
 
@@ -274,6 +275,10 @@
         };
     });
 </script>
+
+<svelte:head>
+    <script defer src={PUBLIC_UMAMI_SCRIPT_URL} data-website-id={PUBLIC_UMAMI_WEBSITE_ID}></script>
+</svelte:head>
 
 <style>
   .container {
