@@ -2,20 +2,19 @@
 	import { onMount } from 'svelte';
 	import * as THREE from 'three';
 	import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-	import {
-		PUBLIC_UMAMI_SCRIPT_URL,
-		PUBLIC_UMAMI_WEBSITE_ID,
-		PUBLIC_DTDG_URL
-	} from '$env/static/public';
+	import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+	import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+	import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+	import { PUBLIC_UMAMI_SCRIPT_URL, PUBLIC_UMAMI_WEBSITE_ID } from '$env/static/public';
 
 	const SPHERE_RADIUS = 2;
-	const SPHERE_SEGMENTS = 128;
+	const SPHERE_SEGMENTS = 386;
 	const LAND_BRIGHTNESS_THRESHOLD = 128;
 	const DOT_ALPHA_TEST = 0.5;
 	const HOVER_THRESHOLD = 0.15;
-	const LOGO_SIZE = 0.2;
-	const CAMERA_DISTANCE = 5;
+	const DISPLACEMENT_STRENGTH = 0.08;
 	const POINT_SIZE = 0.02;
+	const CAMERA_DISTANCE = 5;
 
 	const BASE_COLOR = new THREE.Color(0xcccccc);
 	const HIGHLIGHT_COLOR = new THREE.Color(0x67cef6);
@@ -46,11 +45,25 @@
 		const renderer = new THREE.WebGLRenderer({ antialias: true });
 		renderer.setSize(width, height);
 		renderer.setClearColor(0x000000, 1);
+		renderer.toneMapping = THREE.ReinhardToneMapping;
+		renderer.toneMappingExposure = 1.0;
 		container.appendChild(renderer.domElement);
 
 		const scene = new THREE.Scene();
 		const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1000);
 		camera.position.z = CAMERA_DISTANCE;
+
+		const composer = new EffectComposer(renderer);
+		const renderPass = new RenderPass(scene, camera);
+		composer.addPass(renderPass);
+
+		const bloomPass = new UnrealBloomPass(
+			new THREE.Vector2(width, height),
+			0.3,
+			0.3,
+			0.7
+		);
+		composer.addPass(bloomPass);
 
 		const controls = new OrbitControls(camera, renderer.domElement);
 		controls.enableDamping = true;
@@ -78,6 +91,7 @@
 
 				const filteredPositions = [];
 				const filteredColors = [];
+				const originalPositions = [];
 
 				for (let i = 0; i < vertexCount; i++) {
 					const i3 = i * 3;
@@ -92,6 +106,7 @@
 					if (brightness > LAND_BRIGHTNESS_THRESHOLD) {
 						filteredPositions.push(positions[i3], positions[i3 + 1], positions[i3 + 2]);
 						filteredColors.push(BASE_COLOR.r, BASE_COLOR.g, BASE_COLOR.b);
+						originalPositions.push(positions[i3], positions[i3 + 1], positions[i3 + 2]);
 					}
 				}
 
@@ -110,77 +125,18 @@
 				const points = new THREE.Points(filteredGeo, pointsMaterial);
 				scene.add(points);
 
-				const logoLoader = new THREE.TextureLoader();
-				logoLoader.load(
-					'favicon.png',
-					(logoTexture) => {
-						const aspectRatio = logoTexture.image.width / logoTexture.image.height;
-						const logoGeometry = new THREE.PlaneGeometry(LOGO_SIZE * aspectRatio, LOGO_SIZE);
-
-						const logoMaterial = new THREE.MeshBasicMaterial({
-							map: logoTexture,
-							transparent: true,
-							side: THREE.DoubleSide
-						});
-
-						const logoMesh = new THREE.Mesh(logoGeometry, logoMaterial);
-						const raycasterLogo = new THREE.Raycaster();
-						const mouseClick = new THREE.Vector2();
-
-						function onLogoClick(event) {
-							const rect = renderer.domElement.getBoundingClientRect();
-							mouseClick.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-							mouseClick.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-							raycasterLogo.setFromCamera(mouseClick, camera);
-							const intersects = raycasterLogo.intersectObject(logoMesh);
-
-							if (intersects.length > 0) {
-								window.location.href = PUBLIC_DTDG_URL || 'https://dtdg.fr';
-							}
-						}
-
-						function onLogoPointerMove(event) {
-							const rect = renderer.domElement.getBoundingClientRect();
-							mouseClick.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-							mouseClick.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-							raycasterLogo.setFromCamera(mouseClick, camera);
-							const intersects = raycasterLogo.intersectObject(logoMesh);
-
-							renderer.domElement.style.cursor = intersects.length > 0 ? 'pointer' : 'default';
-						}
-
-						renderer.domElement.addEventListener('click', onLogoClick);
-						renderer.domElement.addEventListener('pointermove', onLogoPointerMove);
-
-						logoMesh.position.set(0, 0, 0);
-						logoMesh.rotation.x = Math.PI / 2;
-
-						scene.add(logoMesh);
-
-						function updateLogoRotation() {
-							logoMesh.quaternion.copy(camera.quaternion);
-						}
-
-						const originalAnimate = animate;
-						animate = function () {
-							updateLogoRotation();
-							originalAnimate();
-						};
-					},
-					undefined,
-					(error) => {
-						console.error('Failed to load logo texture:', error);
-					}
-				);
-
 				const raycaster = new THREE.Raycaster();
 				raycaster.params.Points.threshold = 0.1;
 				const mouse = new THREE.Vector2();
 				let hoverPoint = null;
 				let lastHoverPoint = null;
-				let colorsNeedUpdate = false;
+				let needsUpdate = false;
+				let currentBloomStrength = 0.8;
+
+				const posAttr = filteredGeo.getAttribute('position');
+				const colorAttr = filteredGeo.getAttribute('color');
+				const displacementFactors = new Float32Array(posAttr.count).fill(0);
+				const colorIntensities = new Float32Array(posAttr.count).fill(0);
 
 				function onPointerMove(event) {
 					const rect = renderer.domElement.getBoundingClientRect();
@@ -198,60 +154,84 @@
 				renderer.domElement.addEventListener('pointermove', onPointerMove);
 				renderer.domElement.addEventListener('pointerout', onPointerOut);
 
-				const posAttr = filteredGeo.getAttribute('position');
-				const colorAttr = filteredGeo.getAttribute('color');
-
 				function animate() {
 					requestAnimationFrame(animate);
 					controls.update();
 
 					if (hoverPoint !== lastHoverPoint) {
 						lastHoverPoint = hoverPoint ? hoverPoint.clone() : null;
-						colorsNeedUpdate = true;
+						needsUpdate = true;
 					}
 
-					if (colorsNeedUpdate) {
-						let localHover = null;
-						if (hoverPoint) {
-							localHover = hoverPoint.clone();
-							points.worldToLocal(localHover);
-						}
+					let localHover = null;
+					if (hoverPoint) {
+						localHover = hoverPoint.clone();
+						points.worldToLocal(localHover);
+					}
 
-						for (let i = 0; i < posAttr.count; i++) {
-							const i3 = i * 3;
-							const vx = posAttr.array[i3];
-							const vy = posAttr.array[i3 + 1];
-							const vz = posAttr.array[i3 + 2];
-							let t = 0;
+					let maxIntensity = 0;
 
-							if (localHover) {
-								const dx = vx - localHover.x;
-								const dy = vy - localHover.y;
-								const dz = vz - localHover.z;
-								const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-								if (dist < HOVER_THRESHOLD) {
-									t = 1;
-								}
+					for (let i = 0; i < posAttr.count; i++) {
+						const i3 = i * 3;
+						const ox = originalPositions[i3];
+						const oy = originalPositions[i3 + 1];
+						const oz = originalPositions[i3 + 2];
+
+						let targetDisp = 0;
+						let targetIntensity = 0;
+
+						if (localHover) {
+							const dx = ox - localHover.x;
+							const dy = oy - localHover.y;
+							const dz = oz - localHover.z;
+							const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+							if (dist < HOVER_THRESHOLD) {
+								const normalizedDist = dist / HOVER_THRESHOLD;
+								targetIntensity = 1 - normalizedDist;
+								targetDisp = targetIntensity;
 							}
-
-							colorAttr.array[i3] = THREE.MathUtils.lerp(BASE_COLOR.r, HIGHLIGHT_COLOR.r, t);
-							colorAttr.array[i3 + 1] = THREE.MathUtils.lerp(BASE_COLOR.g, HIGHLIGHT_COLOR.g, t);
-							colorAttr.array[i3 + 2] = THREE.MathUtils.lerp(BASE_COLOR.b, HIGHLIGHT_COLOR.b, t);
 						}
-						colorAttr.needsUpdate = true;
-						colorsNeedUpdate = false;
+
+						displacementFactors[i] += (targetDisp - displacementFactors[i]) * 0.15;
+						colorIntensities[i] += (targetIntensity - colorIntensities[i]) * 0.15;
+
+						const disp = displacementFactors[i];
+						const intensity = colorIntensities[i];
+
+						maxIntensity = Math.max(maxIntensity, intensity);
+
+						const len = Math.sqrt(ox * ox + oy * oy + oz * oz);
+						const scale = 1 + disp * DISPLACEMENT_STRENGTH;
+						posAttr.array[i3] = ox * scale;
+						posAttr.array[i3 + 1] = oy * scale;
+						posAttr.array[i3 + 2] = oz * scale;
+
+						const r = THREE.MathUtils.lerp(BASE_COLOR.r, HIGHLIGHT_COLOR.r, intensity);
+						const g = THREE.MathUtils.lerp(BASE_COLOR.g, HIGHLIGHT_COLOR.g, intensity);
+						const b = THREE.MathUtils.lerp(BASE_COLOR.b, HIGHLIGHT_COLOR.b, intensity);
+
+						const boost = 1 + intensity * 1.5;
+						colorAttr.array[i3] = Math.min(r * boost, 1);
+						colorAttr.array[i3 + 1] = Math.min(g * boost, 1);
+						colorAttr.array[i3 + 2] = Math.min(b * boost, 1);
 					}
 
-					renderer.render(scene, camera);
+					const targetBloom = 0.3 + maxIntensity * 0.6;
+					currentBloomStrength += (targetBloom - currentBloomStrength) * 0.05;
+					bloomPass.strength = currentBloomStrength;
+
+					posAttr.needsUpdate = true;
+					colorAttr.needsUpdate = true;
+
+					composer.render();
 				}
 
 				animate();
 
 				return () => {
-					renderer.domElement.removeEventListener('pointermove', onLogoPointerMove);
-					renderer.domElement.removeEventListener('click', onLogoClick);
 					renderer.domElement.removeEventListener('pointermove', onPointerMove);
 					renderer.domElement.removeEventListener('pointerout', onPointerOut);
+					composer.dispose();
 					renderer.dispose();
 				};
 			},
@@ -267,6 +247,7 @@
 			camera.aspect = w / h;
 			camera.updateProjectionMatrix();
 			renderer.setSize(w, h);
+			composer.setSize(w, h);
 		}
 
 		function onWebGLContextLost(event) {
@@ -277,6 +258,7 @@
 		function onWebGLContextRestored() {
 			console.log('WebGL context restored.');
 			renderer.setSize(container.clientWidth, container.clientHeight);
+			composer.setSize(container.clientWidth, container.clientHeight);
 		}
 
 		renderer.domElement.addEventListener('webglcontextlost', onWebGLContextLost);
