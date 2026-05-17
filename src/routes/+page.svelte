@@ -59,9 +59,9 @@
 
 		const bloomPass = new UnrealBloomPass(
 			new THREE.Vector2(width, height),
-			0.3,
-			0.3,
-			0.7
+			0.5,
+			0.4,
+			0.75
 		);
 		composer.addPass(bloomPass);
 
@@ -131,7 +131,7 @@
 				let hoverPoint = null;
 				let lastHoverPoint = null;
 				let needsUpdate = false;
-				let currentBloomStrength = 0.8;
+				let currentBloomStrength = 0.5;
 
 				const posAttr = filteredGeo.getAttribute('position');
 				const colorAttr = filteredGeo.getAttribute('color');
@@ -216,7 +216,7 @@
 						colorAttr.array[i3 + 2] = Math.min(b * boost, 1);
 					}
 
-					const targetBloom = 0.3 + maxIntensity * 0.6;
+					const targetBloom = 0.5 + maxIntensity * 1.0;
 					currentBloomStrength += (targetBloom - currentBloomStrength) * 0.05;
 					bloomPass.strength = currentBloomStrength;
 
